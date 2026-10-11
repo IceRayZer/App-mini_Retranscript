@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111827">
+  <meta name="description" content="Retranscription vocale gratuite, hors ligne et sans compte.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Retranscription">
+  <title>Retranscription</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="stylesheet" href="css/styles.css">
+  <script src="js/analysis.js" defer></script>
+  <script src="js/app.js" defer></script>
+</head>
+<body>
+  <header class="app-header">
+    <h1>Retranscription</h1>
+  </header>
+
+  <main class="container">
+    <p id="support-message" class="notice" hidden></p>
+
+    <section id="recorder" aria-live="polite">
+      <div class="status-row">
+        <p id="status" class="status">Prêt à enregistrer.</p>
+        <p id="timer" class="timer" aria-label="Durée">00:00</p>
+      </div>
+
+      <div id="live-text" class="live-text" aria-label="Texte en direct"></div>
+
+      <div class="controls">
+        <button id="record-btn" class="btn btn-record" type="button">
+          <span class="btn-icon" aria-hidden="true"></span>
+          Enregistrer
+        </button>
+        <div class="controls-secondary">
+          <button id="pause-btn" class="btn btn-secondary" type="button" disabled>Pause</button>
+          <button id="stop-btn" class="btn btn-secondary btn-stop" type="button" disabled>
+            <span class="stop-icon" aria-hidden="true"></span>
+            Arrêt
+          </button>
+        </div>
+      </div>
+
+      <section id="history" class="history" hidden>
+        <h2>Retranscriptions précédentes</h2>
+        <ul id="history-list" class="history-list"></ul>
+      </section>
+    </section>
+
+    <section id="result" hidden>
+      <div class="result-actions">
+        <button id="new-btn" class="btn btn-secondary" type="button">Nouvel enregistrement</button>
+      </div>
+
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" type="button" data-tab="transcript" aria-selected="true">Transcription</button>
+        <button class="tab" role="tab" type="button" data-tab="analysis" aria-selected="false">Tâches et résumé</button>
+      </div>
+
+      <div class="tab-panel" data-panel="transcript" role="tabpanel">
+        <div id="result-text" class="result-text"></div>
+        <div class="result-actions">
+          <button id="copy-btn" class="btn btn-secondary" type="button">Copier</button>
+          <button id="export-btn" class="btn btn-secondary" type="button">Exporter .txt</button>
+          <button id="delete-btn" class="btn btn-danger" type="button">Supprimer</button>
+        </div>
+      </div>
+
+      <div class="tab-panel" data-panel="analysis" role="tabpanel" hidden>
+        <h2>Tâches à faire</h2>
+        <ul id="tasks-list" class="bullet-list"></ul>
+        <h2>Résumé</h2>
+        <ul id="summary-list" class="bullet-list"></ul>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

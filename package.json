@@ -1,0 +1,9 @@
+{
+  "name": "app-mini-retranscript",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Retranscription vocale gratuite, hors ligne et sans compte",
+  "scripts": {
+    "test": "node --test tests/analysis.test.js"
+  }
+}
