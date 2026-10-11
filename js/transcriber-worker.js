@@ -2,9 +2,10 @@
 // Le modèle est téléchargé une seule fois, puis gardé dans le cache du navigateur.
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0';
 
-// small = bon compromis qualité / vitesse sur téléphone. Pour plus rapide mais moins précis : 'Xenova/whisper-base'.
-const MODEL_ID = 'Xenova/whisper-small';
-const DTYPE = 'q8';
+// base en précision complète (fp32) : le format quantifié q8 de small a échoué à la création de session
+// (« TransposeDQWeightsForMatMulNBits Missing required scale ») sur le moteur WebAssembly du navigateur.
+const MODEL_ID = 'Xenova/whisper-base';
+const DTYPE = { encoder_model: 'fp32', decoder_model_merged: 'fp32' };
 
 env.allowLocalModels = false;
 env.useBrowserCache = true;

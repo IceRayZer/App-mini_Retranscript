@@ -11,7 +11,7 @@ Elle s'installe sur l'écran d'accueil du téléphone comme une application.
   - l'onglet **Transcription** (copier, exporter en `.txt`, supprimer) ;
   - l'onglet **Tâches et résumé** (phrases d'action détectées et résumé simple).
 
-Le modèle Whisper (`Xenova/whisper-small`, environ 250 Mo) se télécharge **une seule fois**, au premier enregistrement. Il est ensuite gardé dans le navigateur, et les transcriptions suivantes ne téléchargent plus rien.
+Le modèle Whisper (`Xenova/whisper-base`, en précision complète, environ 300 Mo) se télécharge **une seule fois**, au premier enregistrement. Il est ensuite gardé dans le navigateur, et les transcriptions suivantes ne téléchargent plus rien.
 
 Les retranscriptions restent uniquement dans le navigateur du téléphone.
 

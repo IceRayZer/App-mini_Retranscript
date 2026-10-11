@@ -12,6 +12,9 @@
     status: $('status'),
     timer: $('timer'),
     hint: $('live-text'),
+    progress: $('progress'),
+    progressLabel: $('progress-label'),
+    progressFill: $('progress-fill'),
     recorder: $('recorder'),
     result: $('result'),
     resultText: $('result-text'),
@@ -77,6 +80,18 @@
 
   // ---------- Affichage ----------
 
+  // percent connu : barre remplie ; null : barre qui glisse (durée inconnue).
+  function showProgress(label, percent = null) {
+    els.progress.hidden = false;
+    els.progressLabel.textContent = label;
+    els.progressFill.classList.toggle('indeterminate', percent === null);
+    els.progressFill.style.width = percent === null ? '' : `${Math.min(100, Math.max(0, percent))}%`;
+  }
+
+  function hideProgress() {
+    els.progress.hidden = true;
+  }
+
   function updateButtons() {
     const s = state.status;
     const busy = s === 'transcribing';
@@ -114,10 +129,12 @@
     const msg = event.data;
     if (msg.type === 'progress') {
       if (!state.modelReady) {
-        setStatus(`Téléchargement du modèle (une seule fois) : ${Math.round(msg.progress || 0)} %`);
+        const pct = Math.round(msg.progress || 0);
+        showProgress(`Téléchargement du modèle (une seule fois) : ${pct} %`, pct);
       }
     } else if (msg.type === 'ready') {
       state.modelReady = true;
+      hideProgress();
       if (state.status === 'idle') setStatus('Prêt à enregistrer.');
     } else if (msg.type === 'result') {
       finishSession(msg.text);
@@ -125,6 +142,7 @@
       if (msg.phase === 'load') {
         // Un échec de préchargement ne doit pas couper un enregistrement en cours : on pourra réessayer.
         state.modelRequested = false;
+        hideProgress();
         if (state.status === 'idle') setStatus(`Modèle indisponible : ${msg.message}`);
       } else {
         failTranscription(msg.message);
@@ -238,7 +256,6 @@
   function stopRecording() {
     if (!state.recorder || (state.status !== 'recording' && state.status !== 'paused')) return;
     stopTimer();
-    releaseWakeLock();
     state.status = 'transcribing';
     updateButtons();
     setStatus('Préparation de l\'audio…');
@@ -262,9 +279,7 @@
         const blob = new Blob(state.chunks, { type: recorder.mimeType || 'audio/webm' });
         const samples = await decodeTo16kMono(await blob.arrayBuffer());
         state.current = { durationMs };
-        setStatus(state.modelReady
-          ? 'Transcription en cours… (plusieurs minutes pour un long enregistrement)'
-          : 'Chargement du modèle puis transcription…');
+        startTranscriptionProgress();
         worker.postMessage({ type: 'transcribe', audio: samples }, [samples.buffer]);
       } catch {
         failTranscription('impossible de lire l\'enregistrement audio.');
@@ -276,7 +291,34 @@
     recorder.stop();
   }
 
+  // Pendant la transcription : barre qui glisse et temps écoulé, pour montrer que ça tourne.
+  let transcribeStart = 0;
+  let transcribeTimerId = null;
+
+  function startTranscriptionProgress() {
+    transcribeStart = performance.now();
+    acquireWakeLock(); // l'écran ne doit pas s'éteindre pendant le calcul
+    const update = () => {
+      const label = state.modelReady
+        ? 'Transcription en cours…'
+        : 'Chargement du modèle puis transcription…';
+      showProgress(`${label} ${formatTime(performance.now() - transcribeStart)} écoulées`);
+      setStatus('Ne ferme pas l\'écran. Un long enregistrement peut prendre plusieurs minutes.');
+    };
+    update();
+    clearInterval(transcribeTimerId);
+    transcribeTimerId = setInterval(update, 1000);
+  }
+
+  function stopTranscriptionProgress() {
+    clearInterval(transcribeTimerId);
+    transcribeTimerId = null;
+    releaseWakeLock();
+    hideProgress();
+  }
+
   function failTranscription(message) {
+    stopTranscriptionProgress();
     state.status = 'idle';
     state.recorder = null;
     state.chunks = [];
@@ -285,6 +327,7 @@
   }
 
   function finishSession(text) {
+    stopTranscriptionProgress();
     const durationMs = state.current?.durationMs ?? Math.round(state.elapsedMs);
     state.current = null;
     state.status = 'idle';
@@ -333,7 +376,7 @@
 
   async function acquireWakeLock() {
     try {
-      if ('wakeLock' in navigator && state.status === 'recording') {
+      if ('wakeLock' in navigator && (state.status === 'recording' || state.status === 'transcribing')) {
         state.wakeLock = await navigator.wakeLock.request('screen');
       }
     } catch {

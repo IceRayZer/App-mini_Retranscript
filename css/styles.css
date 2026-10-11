@@ -94,6 +94,42 @@ h2 {
   font-weight: 600;
 }
 
+.progress {
+  margin-top: 12px;
+}
+
+.progress-label {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.progress-track {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--primary);
+  transition: width 0.3s ease;
+}
+
+/* Sans pourcentage connu (transcription en cours) : barre qui glisse en boucle. */
+.progress-fill.indeterminate {
+  width: 40%;
+  animation: slide 1.2s ease-in-out infinite;
+}
+
+@keyframes slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(260%); }
+}
+
 .live-text {
   margin: 16px 0;
   min-height: 220px;

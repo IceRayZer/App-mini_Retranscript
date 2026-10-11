@@ -30,7 +30,14 @@
         <p id="timer" class="timer" aria-label="Durée">00:00</p>
       </div>
 
-      <div id="live-text" class="live-text" aria-label="Texte en direct"></div>
+      <div id="progress" class="progress" hidden>
+        <p id="progress-label" class="progress-label"></p>
+        <div class="progress-track" role="progressbar" aria-label="Progression">
+          <div id="progress-fill" class="progress-fill"></div>
+        </div>
+      </div>
+
+      <div id="live-text" class="live-text" aria-live="polite"></div>
 
       <div class="controls">
         <button id="record-btn" class="btn btn-record" type="button">
