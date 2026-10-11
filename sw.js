@@ -1,12 +1,13 @@
 // Service worker : l'app fonctionne hors ligne une fois chargée.
 // Incrémente CACHE_VERSION à chaque modification des fichiers pour forcer la mise à jour.
-const CACHE_VERSION = 'retranscript-v1';
+const CACHE_VERSION = 'retranscript-v2';
 const ASSETS = [
   './',
   './index.html',
   './css/styles.css',
   './js/analysis.js',
   './js/app.js',
+  './js/transcriber-worker.js',
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png',
@@ -31,7 +32,9 @@ self.addEventListener('activate', (event) => {
 // Réseau d'abord (pour recevoir les mises à jour), cache en secours hors ligne.
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
-  if (new URL(event.request.url).origin !== self.location.origin) return;
+  const origin = new URL(event.request.url).origin;
+  // Même origine, plus la bibliothèque Whisper (CDN) pour qu'elle reste disponible hors ligne.
+  if (origin !== self.location.origin && origin !== 'https://cdn.jsdelivr.net') return;
   event.respondWith(
     fetch(event.request)
       .then((response) => {

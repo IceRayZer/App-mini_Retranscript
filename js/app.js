@@ -1,8 +1,7 @@
-// Retranscription vocale 100 % locale au navigateur (Web Speech API), sans compte ni clé API.
+// Enregistrement audio local, puis retranscription Whisper dans le navigateur (aucun envoi, aucun compte).
 (function () {
-  const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
   const STORAGE_KEY = 'retranscript.sessions';
-  const LANG = 'fr-FR';
+  const MIN_DURATION_MS = 1000;
 
   const $ = (id) => document.getElementById(id);
   const els = {
@@ -12,7 +11,7 @@
     stopBtn: $('stop-btn'),
     status: $('status'),
     timer: $('timer'),
-    live: $('live-text'),
+    hint: $('live-text'),
     recorder: $('recorder'),
     result: $('result'),
     resultText: $('result-text'),
@@ -28,17 +27,21 @@
     panels: document.querySelectorAll('.tab-panel'),
   };
 
-  // idle -> recording <-> paused -> idle (après arrêt, on affiche le résultat)
+  const canRecord = Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
+
+  // idle -> recording <-> paused -> transcribing -> idle
   const state = {
     status: 'idle',
-    recognition: null,
-    finalText: '',
-    interimText: '',
+    recorder: null,
+    stream: null,
+    chunks: [],
     elapsedMs: 0,
     segmentStart: 0,
     timerId: null,
     wakeLock: null,
     current: null,
+    modelReady: false,
+    modelRequested: false,
   };
 
   // ---------- Utilitaires ----------
@@ -53,12 +56,6 @@
     const m = String(Math.floor((total % 3600) / 60)).padStart(2, '0');
     const s = String(total % 60).padStart(2, '0');
     return h > 0 ? `${h}:${m}:${s}` : `${m}:${s}`;
-  }
-
-  function appendText(base, addition) {
-    const add = addition.trim();
-    if (!add) return base;
-    return base ? `${base} ${add}` : add;
   }
 
   function loadSessions() {
@@ -78,26 +75,15 @@
     }
   }
 
-  // ---------- Écran d'accueil du tableau de bord ----------
+  // ---------- Affichage ----------
 
   function updateButtons() {
     const s = state.status;
-    els.recordBtn.disabled = !SpeechRecognitionAPI || s === 'recording' || s === 'paused';
-    els.pauseBtn.disabled = s !== 'recording' && s !== 'paused';
+    const busy = s === 'transcribing';
+    els.recordBtn.disabled = !canRecord || busy || s === 'recording' || s === 'paused';
+    els.pauseBtn.disabled = !(s === 'recording' || s === 'paused');
     els.pauseBtn.textContent = s === 'paused' ? 'Reprendre' : 'Pause';
-    els.stopBtn.disabled = s !== 'recording' && s !== 'paused';
-  }
-
-  function renderLive() {
-    els.live.textContent = '';
-    els.live.append(document.createTextNode(state.finalText));
-    if (state.interimText) {
-      const interim = document.createElement('span');
-      interim.className = 'interim';
-      interim.textContent = (state.finalText ? ' ' : '') + state.interimText;
-      els.live.append(interim);
-    }
-    els.live.scrollTop = els.live.scrollHeight;
+    els.stopBtn.disabled = !(s === 'recording' || s === 'paused');
   }
 
   function renderHistory() {
@@ -120,68 +106,230 @@
     }
   }
 
-  // ---------- Reconnaissance vocale ----------
+  // ---------- Moteur de transcription (worker Whisper) ----------
 
-  function createRecognition() {
-    const rec = new SpeechRecognitionAPI();
-    rec.lang = LANG;
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.maxAlternatives = 1;
+  const worker = new Worker('js/transcriber-worker.js', { type: 'module' });
 
-    rec.onresult = (event) => {
-      let interim = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const result = event.results[i];
-        if (result.isFinal) {
-          state.finalText = appendText(state.finalText, result[0].transcript);
-        } else {
-          interim += result[0].transcript;
-        }
+  worker.onmessage = (event) => {
+    const msg = event.data;
+    if (msg.type === 'progress') {
+      if (!state.modelReady) {
+        setStatus(`Téléchargement du modèle (une seule fois) : ${Math.round(msg.progress || 0)} %`);
       }
-      state.interimText = interim;
-      renderLive();
-    };
-
-    rec.onerror = (event) => {
-      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-        setStatus('Micro refusé : autorise le micro dans les réglages du navigateur.');
-        stopAll(false);
+    } else if (msg.type === 'ready') {
+      state.modelReady = true;
+      if (state.status === 'idle') setStatus('Prêt à enregistrer.');
+    } else if (msg.type === 'result') {
+      finishSession(msg.text);
+    } else if (msg.type === 'error') {
+      if (msg.phase === 'load') {
+        // Un échec de préchargement ne doit pas couper un enregistrement en cours : on pourra réessayer.
+        state.modelRequested = false;
+        if (state.status === 'idle') setStatus(`Modèle indisponible : ${msg.message}`);
+      } else {
+        failTranscription(msg.message);
       }
-      // 'no-speech' et 'aborted' sont normaux : onend relancera la reconnaissance si besoin.
-    };
-
-    // Chrome coupe la reconnaissance après un long silence : on la relance tant qu'on enregistre.
-    rec.onend = () => {
-      state.recognition = null;
-      if (state.pendingFinish) return finalizeSession();
-      if (state.status === 'recording') startRecognition();
-    };
-
-    return rec;
-  }
-
-  function startRecognition() {
-    try {
-      state.recognition = createRecognition();
-      state.recognition.start();
-    } catch {
-      // start() peut lever une exception si une session est déjà en cours : on ignore.
     }
+  };
+
+  const WORKER_ERROR = 'moteur de transcription indisponible. Vérifie la connexion (premier lancement) puis recharge la page.';
+  let workerFailed = false;
+
+  worker.onerror = () => {
+    workerFailed = true;
+    if (state.status === 'transcribing') failTranscription(WORKER_ERROR);
+    else if (state.status === 'idle') setStatus(`Erreur : ${WORKER_ERROR}`);
+  };
+
+  // Télécharge le modèle en arrière-plan dès le premier enregistrement, pour éviter l'attente à l'arrêt.
+  function preloadModel() {
+    if (state.modelRequested) return;
+    state.modelRequested = true;
+    worker.postMessage({ type: 'load' });
   }
 
-  function stopRecognition() {
-    const rec = state.recognition;
-    if (!rec) return;
-    state.recognition = null;
-    try {
-      rec.stop();
-    } catch {
-      /* déjà arrêtée */
+  // ---------- Enregistrement audio ----------
+
+  function pickMimeType() {
+    const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
+    return candidates.find((t) => MediaRecorder.isTypeSupported?.(t)) || '';
+  }
+
+  function releaseStream() {
+    state.stream?.getTracks().forEach((track) => track.stop());
+    state.stream = null;
+  }
+
+  async function startRecording() {
+    if (!canRecord || state.status !== 'idle') return;
+    if (workerFailed) {
+      setStatus(`Erreur : ${WORKER_ERROR}`);
+      return;
     }
+    try {
+      state.stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      });
+    } catch {
+      setStatus('Micro refusé : autorise le micro dans les réglages du navigateur.');
+      return;
+    }
+
+    const mimeType = pickMimeType();
+    state.recorder = mimeType
+      ? new MediaRecorder(state.stream, { mimeType })
+      : new MediaRecorder(state.stream);
+    state.chunks = [];
+    state.elapsedMs = 0;
+    state.recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) state.chunks.push(e.data);
+    };
+    state.recorder.start(1000);
+
+    state.status = 'recording';
+    startTimer();
+    acquireWakeLock();
+    preloadModel();
+    setStatus('Enregistrement en cours…');
+    updateButtons();
   }
 
-  // ---------- Verrou d'écran (évite que le téléphone s'endorme pendant l'enregistrement) ----------
+  function togglePause() {
+    if (!state.recorder) return;
+    if (state.status === 'recording') {
+      // Pause : le navigateur n'enregistre plus rien tant que c'est en pause.
+      state.recorder.pause();
+      stopTimer(); // doit être appelé avant de changer le statut, pour compter le temps écoulé
+      state.status = 'paused';
+      releaseWakeLock();
+      setStatus('En pause : rien n\'est enregistré. Reprendre ou Arrêt.');
+    } else if (state.status === 'paused') {
+      state.recorder.resume();
+      state.status = 'recording';
+      startTimer();
+      acquireWakeLock();
+      setStatus('Enregistrement en cours…');
+    }
+    updateButtons();
+  }
+
+  // Décode l'audio enregistré en Float32 mono 16 kHz, format attendu par Whisper.
+  async function decodeTo16kMono(arrayBuffer) {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new AudioCtx();
+    let decoded;
+    try {
+      decoded = await ctx.decodeAudioData(arrayBuffer);
+    } finally {
+      ctx.close();
+    }
+    if (decoded.sampleRate === 16000 && decoded.numberOfChannels === 1) {
+      return decoded.getChannelData(0).slice();
+    }
+    const offline = new OfflineAudioContext(1, Math.ceil(decoded.duration * 16000), 16000);
+    const source = offline.createBufferSource();
+    source.buffer = decoded;
+    source.connect(offline.destination);
+    source.start();
+    const rendered = await offline.startRendering();
+    return rendered.getChannelData(0).slice();
+  }
+
+  function stopRecording() {
+    if (!state.recorder || (state.status !== 'recording' && state.status !== 'paused')) return;
+    stopTimer();
+    releaseWakeLock();
+    state.status = 'transcribing';
+    updateButtons();
+    setStatus('Préparation de l\'audio…');
+
+    const recorder = state.recorder;
+    recorder.onstop = async () => {
+      releaseStream();
+      const durationMs = Math.round(state.elapsedMs);
+      if (durationMs < MIN_DURATION_MS || state.chunks.length === 0) {
+        state.status = 'idle';
+        state.recorder = null;
+        updateButtons();
+        setStatus('Enregistrement trop court, rien à transcrire.');
+        return;
+      }
+      if (workerFailed) {
+        failTranscription(WORKER_ERROR);
+        return;
+      }
+      try {
+        const blob = new Blob(state.chunks, { type: recorder.mimeType || 'audio/webm' });
+        const samples = await decodeTo16kMono(await blob.arrayBuffer());
+        state.current = { durationMs };
+        setStatus(state.modelReady
+          ? 'Transcription en cours… (plusieurs minutes pour un long enregistrement)'
+          : 'Chargement du modèle puis transcription…');
+        worker.postMessage({ type: 'transcribe', audio: samples }, [samples.buffer]);
+      } catch {
+        failTranscription('impossible de lire l\'enregistrement audio.');
+      } finally {
+        state.chunks = [];
+        state.recorder = null;
+      }
+    };
+    recorder.stop();
+  }
+
+  function failTranscription(message) {
+    state.status = 'idle';
+    state.recorder = null;
+    state.chunks = [];
+    updateButtons();
+    setStatus(`Erreur : ${message}`);
+  }
+
+  function finishSession(text) {
+    const durationMs = state.current?.durationMs ?? Math.round(state.elapsedMs);
+    state.current = null;
+    state.status = 'idle';
+    updateButtons();
+
+    const session = {
+      id: String(Date.now()),
+      date: new Date().toISOString(),
+      durationMs,
+      text: text.trim(),
+    };
+    if (session.text) {
+      const sessions = loadSessions();
+      sessions.unshift(session);
+      if (!saveSessions(sessions)) {
+        setStatus('Affiché à l\'écran, mais le stockage du téléphone est plein.');
+      }
+    }
+    renderHistory();
+    showResult(session);
+  }
+
+  // ---------- Chronomètre (ne compte que le temps d'enregistrement actif) ----------
+
+  function startTimer() {
+    state.segmentStart = performance.now();
+    clearInterval(state.timerId);
+    state.timerId = setInterval(() => {
+      els.timer.textContent = formatTime(currentElapsed());
+    }, 250);
+  }
+
+  function stopTimer() {
+    clearInterval(state.timerId);
+    state.timerId = null;
+    state.elapsedMs = currentElapsed();
+    els.timer.textContent = formatTime(state.elapsedMs);
+  }
+
+  function currentElapsed() {
+    const running = state.status === 'recording' ? performance.now() - state.segmentStart : 0;
+    return state.elapsedMs + running;
+  }
+
+  // ---------- Verrou d'écran ----------
 
   async function acquireWakeLock() {
     try {
@@ -207,110 +355,6 @@
       acquireWakeLock();
     }
   });
-
-  // ---------- Chronomètre (ne compte que le temps d'enregistrement actif) ----------
-
-  function startTimer() {
-    state.segmentStart = performance.now();
-    clearInterval(state.timerId);
-    state.timerId = setInterval(() => {
-      els.timer.textContent = formatTime(currentElapsed());
-    }, 250);
-  }
-
-  function stopTimer() {
-    clearInterval(state.timerId);
-    state.timerId = null;
-    state.elapsedMs = currentElapsed();
-    els.timer.textContent = formatTime(state.elapsedMs);
-  }
-
-  function currentElapsed() {
-    const running = state.status === 'recording' ? performance.now() - state.segmentStart : 0;
-    return state.elapsedMs + running;
-  }
-
-  // ---------- Actions utilisateur ----------
-
-  function startRecording() {
-    if (!SpeechRecognitionAPI) return;
-    state.status = 'recording';
-    state.pendingFinish = false;
-    state.finalText = '';
-    state.interimText = '';
-    state.elapsedMs = 0;
-    setStatus('Enregistrement en cours…');
-    startTimer();
-    acquireWakeLock();
-    startRecognition();
-    updateButtons();
-    renderLive();
-  }
-
-  function togglePause() {
-    if (state.status === 'recording') {
-      // Pause : on coupe la reconnaissance, rien n'est capté tant que c'est en pause.
-      state.status = 'paused';
-      stopTimer();
-      stopRecognition();
-      state.interimText = '';
-      renderLive();
-      releaseWakeLock();
-      setStatus('En pause : rien n\'est capté. Appuie sur Reprendre ou Arrêt.');
-    } else if (state.status === 'paused') {
-      state.status = 'recording';
-      setStatus('Enregistrement en cours…');
-      startTimer();
-      acquireWakeLock();
-      startRecognition();
-    }
-    updateButtons();
-  }
-
-  // Arrête tout. finalize=true : sauvegarde la session et affiche le résultat.
-  function stopAll(finalize) {
-    const wasActive = state.status === 'recording' || state.status === 'paused';
-    const hadRecognition = state.recognition !== null;
-    stopTimer();
-    stopRecognition();
-    releaseWakeLock();
-    state.status = 'idle';
-    state.interimText = '';
-    updateButtons();
-
-    if (!finalize || !wasActive) return;
-    state.pendingFinish = true;
-    if (hadRecognition) {
-      // Chrome envoie encore les derniers résultats après stop() : onend termine, délai de secours sinon.
-      setTimeout(finalizeSession, 1500);
-    } else {
-      finalizeSession();
-    }
-  }
-
-  // Idempotent : ne fait rien si la session a déjà été finalisée.
-  function finalizeSession() {
-    if (!state.pendingFinish) return;
-    state.pendingFinish = false;
-    renderLive();
-
-    const text = state.finalText.trim();
-    const session = {
-      id: String(Date.now()),
-      date: new Date().toISOString(),
-      durationMs: Math.round(state.elapsedMs),
-      text,
-    };
-    if (text) {
-      const sessions = loadSessions();
-      sessions.unshift(session);
-      if (!saveSessions(sessions)) {
-        setStatus('Affiché à l\'écran, mais le stockage du téléphone est plein.');
-      }
-    }
-    renderHistory();
-    showResult(session);
-  }
 
   // ---------- Écran de résultat ----------
 
@@ -345,19 +389,17 @@
     state.current = null;
     els.result.hidden = true;
     els.recorder.hidden = false;
-    state.finalText = '';
     state.elapsedMs = 0;
     els.timer.textContent = '00:00';
-    setStatus('Prêt à enregistrer.');
-    renderLive();
+    els.hint.textContent = 'Appuie sur Enregistrer et parle. La transcription se fait à l\'arrêt, sur ton téléphone.';
+    setStatus(state.modelReady ? 'Prêt à enregistrer.' : 'Prêt à enregistrer. Le modèle se chargera au premier enregistrement.');
     renderHistory();
     updateButtons();
   }
 
   function selectTab(name) {
     for (const tab of els.tabs) {
-      const active = tab.dataset.tab === name;
-      tab.setAttribute('aria-selected', String(active));
+      tab.setAttribute('aria-selected', String(tab.dataset.tab === name));
     }
     for (const panel of els.panels) {
       panel.hidden = panel.dataset.panel !== name;
@@ -376,11 +418,11 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  // ---------- Branchement des événements ----------
+  // ---------- Événements ----------
 
   els.recordBtn.addEventListener('click', startRecording);
   els.pauseBtn.addEventListener('click', togglePause);
-  els.stopBtn.addEventListener('click', () => stopAll(true));
+  els.stopBtn.addEventListener('click', stopRecording);
 
   els.copyBtn.addEventListener('click', async () => {
     try {
@@ -409,10 +451,9 @@
 
   // ---------- Démarrage ----------
 
-  if (!SpeechRecognitionAPI) {
+  if (!canRecord) {
     els.support.hidden = false;
-    els.support.textContent =
-      'La reconnaissance vocale n\'est pas disponible dans ce navigateur. Utilise Chrome sur Android, ou Safari récent.';
+    els.support.textContent = 'Enregistrement audio non disponible dans ce navigateur. Utilise Chrome ou Safari récent.';
   }
 
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {

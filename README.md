@@ -5,11 +5,13 @@ Elle s'installe sur l'écran d'accueil du téléphone comme une application.
 
 ## Utilisation
 
-- **Enregistrer** : démarre la retranscription. Le texte apparaît en direct.
-- **Pause / Reprendre** : suspend la capture. Rien n'est transcrit pendant la pause.
-- **Arrêt** (carré) : termine l'enregistrement, sauvegarde le texte sur le téléphone et affiche :
+- **Enregistrer** : démarre l'enregistrement audio. Le modèle de transcription se charge en arrière-plan.
+- **Pause / Reprendre** : suspend l'enregistrement. Rien n'est capté pendant la pause.
+- **Arrêt** (carré) : termine l'enregistrement, puis la transcription Whisper se fait sur le téléphone. Le résultat est sauvegardé et affiché avec :
   - l'onglet **Transcription** (copier, exporter en `.txt`, supprimer) ;
   - l'onglet **Tâches et résumé** (phrases d'action détectées et résumé simple).
+
+Le modèle Whisper (`Xenova/whisper-small`, environ 250 Mo) se télécharge **une seule fois**, au premier enregistrement. Il est ensuite gardé dans le navigateur, et les transcriptions suivantes ne téléchargent plus rien.
 
 Les retranscriptions restent uniquement dans le navigateur du téléphone.
 
@@ -23,9 +25,10 @@ Sur iPhone, utiliser Safari, puis **Partager → Sur l'écran d'accueil**. La re
 
 ## Limites connues
 
-- La reconnaissance vocale utilise le service intégré du navigateur (gratuit). Sur Chrome, l'audio est traité par Google : il n'est donc pas 100 % local.
-- Le français est la langue de référence. Les mots en langue étrangère au milieu d'une phrase sont souvent mal transcrits.
+- La transcription se fait après l'arrêt, pas en direct. Pour un long enregistrement, ça peut prendre plusieurs minutes sur un téléphone.
+- Le premier lancement nécessite une connexion pour télécharger le modèle. Ensuite, l'app fonctionne hors ligne.
 - Les tâches et le résumé sont détectés par règles simples, sans intelligence artificielle.
+- Non testé sur téléphone réel au moment de l'écriture : la transcription Whisper doit être vérifiée sur ton appareil.
 
 ## Développement
 
@@ -39,6 +42,7 @@ node --test tests/analysis.test.js
 Structure :
 
 - `index.html`, `css/styles.css` : interface
-- `js/app.js` : enregistrement, pause, arrêt, reconnaissance vocale
+- `js/app.js` : enregistrement, pause, arrêt, affichage des résultats
+- `js/transcriber-worker.js` : moteur Whisper (Transformers.js) dans un worker
 - `js/analysis.js` : détection des tâches et résumé (fonctions pures, testées)
 - `manifest.webmanifest`, `sw.js`, `icons/` : installation et mode hors ligne
