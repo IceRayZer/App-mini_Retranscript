@@ -1,6 +1,7 @@
 // Enregistrement audio local, puis retranscription Whisper dans le navigateur (aucun envoi, aucun compte).
 (function () {
   const STORAGE_KEY = 'retranscript.sessions';
+  const GLOSSARY_KEY = 'retranscript.glossary';
   const MIN_DURATION_MS = 1000;
 
   const $ = (id) => document.getElementById(id);
@@ -26,6 +27,7 @@
     exportBtn: $('export-btn'),
     newBtn: $('new-btn'),
     deleteBtn: $('delete-btn'),
+    glossaryInput: $('glossary-input'),
     tabs: document.querySelectorAll('.tab'),
     panels: document.querySelectorAll('.tab-panel'),
   };
@@ -66,6 +68,22 @@
       return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
     } catch {
       return [];
+    }
+  }
+
+  function loadGlossary() {
+    try {
+      return JSON.parse(localStorage.getItem(GLOSSARY_KEY)) || [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveGlossary(terms) {
+    try {
+      localStorage.setItem(GLOSSARY_KEY, JSON.stringify(terms));
+    } catch {
+      /* stockage plein : le glossaire reste utilisable pour cette session */
     }
   }
 
@@ -337,7 +355,7 @@
       id: String(Date.now()),
       date: new Date().toISOString(),
       durationMs,
-      text: text.trim(),
+      text: window.Analysis.applyGlossary(text, loadGlossary()).trim(),
     };
     if (session.text) {
       const sessions = loadSessions();
@@ -487,6 +505,12 @@
   });
 
   els.newBtn.addEventListener('click', showRecorder);
+
+  els.glossaryInput.value = loadGlossary().join('\n');
+  els.glossaryInput.addEventListener('change', () => {
+    const terms = els.glossaryInput.value.split('\n').map((t) => t.trim()).filter(Boolean);
+    saveGlossary(terms);
+  });
 
   for (const tab of els.tabs) {
     tab.addEventListener('click', () => selectTab(tab.dataset.tab));

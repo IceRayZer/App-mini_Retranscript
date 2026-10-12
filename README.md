@@ -11,7 +11,7 @@ Elle s'installe sur l'écran d'accueil du téléphone comme une application.
   - l'onglet **Transcription** (copier, exporter en `.txt`, supprimer) ;
   - l'onglet **Tâches et résumé** (phrases d'action détectées et résumé simple).
 
-Le modèle Whisper (`Xenova/whisper-base`, en précision complète, environ 300 Mo) se télécharge **une seule fois**, au premier enregistrement. Il est ensuite gardé dans le navigateur, et les transcriptions suivantes ne téléchargent plus rien.
+Le modèle Whisper (`Xenova/whisper-small`, en précision complète, environ 1 Go) se télécharge **une seule fois**, au premier enregistrement. Sur un téléphone peu puissant, il peut être lent ou échouer par manque de mémoire. Il est ensuite gardé dans le navigateur, et les transcriptions suivantes ne téléchargent plus rien.
 
 Les retranscriptions restent uniquement dans le navigateur du téléphone.
 
@@ -27,7 +27,8 @@ Sur iPhone, utiliser Safari, puis **Partager → Sur l'écran d'accueil**. La re
 
 - La transcription se fait après l'arrêt, pas en direct. Pour un long enregistrement, ça peut prendre plusieurs minutes sur un téléphone.
 - Le premier lancement nécessite une connexion pour télécharger le modèle. Ensuite, l'app fonctionne hors ligne.
-- Les tâches et le résumé sont détectés par règles simples, sans intelligence artificielle.
+- Les tâches et le résumé sont détectés par règles simples, sans intelligence artificielle. Une liste dictée avec « Ensuite », « Première chose » ou « en nouveau point » est découpée point par point.
+- Le glossaire (« Mots à corriger ») corrige les formes proches d'un mot que tu as ajouté. Il ne peut pas retrouver un mot que le modèle n'a pas écrit.
 - Non testé sur téléphone réel au moment de l'écriture : la transcription Whisper doit être vérifiée sur ton appareil.
 
 ## Développement

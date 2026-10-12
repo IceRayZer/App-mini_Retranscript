@@ -1,7 +1,9 @@
 // Lancer avec : node --test tests/
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { splitSentences, extractTasks, summarize } = require('../js/analysis.js');
+const fs = require('node:fs');
+const path = require('node:path');
+const { splitSentences, extractTasks, summarize, applyGlossary, levenshtein } = require('../js/analysis.js');
 
 test('splitSentences découpe sur la ponctuation et les retours à la ligne', () => {
   const parts = splitSentences('Bonjour. Il faut acheter du pain ! Et du lait ?\nMerci');
@@ -47,4 +49,41 @@ test('summarize garde le nombre demandé, dans l\'ordre d\'origine', () => {
   assert.equal(summary.length, 2);
   const indexes = summary.map((s) => text.indexOf(s));
   assert.deepEqual(indexes, [...indexes].sort((a, b) => a - b));
+});
+
+test('liste dictée réelle : chaque point devient une tâche, sans l\'introduction', () => {
+  const text = fs.readFileSync(path.join(__dirname, 'fixtures', 'liste-taches.txt'), 'utf8');
+  const tasks = extractTasks(text);
+  assert.equal(tasks.length, 6);
+  assert.match(tasks[0], /^Faire la demande de ETAIL/);
+  assert.match(tasks[1], /^Finir avec Fortu Néo/);
+  assert.match(tasks[2], /^Continuez le portfolio/);
+  assert.match(tasks[4], /^Chercher les auto-écoles/);
+  assert.match(tasks[4], /places pour des examens/);
+  assert.match(tasks[5], /^Réviser le code de la route/);
+  assert.ok(!tasks.some((t) => /voici ce que/i.test(t)));
+  assert.ok(!tasks.some((t) => /4e ou 5e point/i.test(t)));
+});
+
+test('le résumé d\'une liste commence par le nombre de tâches', () => {
+  const text = fs.readFileSync(path.join(__dirname, 'fixtures', 'liste-taches.txt'), 'utf8');
+  const summary = summarize(text, 3);
+  assert.equal(summary[0], '6 tâches détectées.');
+  assert.equal(summary.length, 7);
+});
+
+test('levenshtein compte les différences', () => {
+  assert.equal(levenshtein('taglit', 'taglit'), 0);
+  assert.equal(levenshtein('taglitte', 'taglit'), 2);
+});
+
+test('applyGlossary corrige les formes proches, y compris un mot coupé en deux', () => {
+  const out = applyGlossary('faire la demande pour ta glitte et finir avec Fortu Néo', ['Taglit', 'Fortuneo']);
+  assert.equal(out, 'faire la demande pour Taglit et finir avec Fortuneo');
+});
+
+test('applyGlossary ne touche pas aux mots sans rapport', () => {
+  const text = 'Il fait beau aujourd\'hui.';
+  assert.equal(applyGlossary(text, ['Taglit']), text);
+  assert.equal(applyGlossary(text, []), text);
 });
